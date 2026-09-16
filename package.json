@@ -1,0 +1,50 @@
+{
+  "name": "verilog-begin-end-fixer",
+  "displayName": "Verilog BeginEnd Fixer",
+  "publisher": "local",
+  "description": "×Ô¶¯¸øalways/if/else/for²¹begin-end",
+  "version": "0.0.1",
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "categories": ["Other"],
+  "activationEvents": [
+    "onCommand:verilog-helper.fixBeginEnd"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "verilog-helper.fixBeginEnd",
+        "title": "Verilog: Auto add begin-end"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "verilog-helper.fixBeginEnd",
+        "key": "ctrl+alt+k",
+        "mac": "cmd+alt+k",
+        "when": "editorTextFocus && (editorLangId == verilog || editorLangId == systemverilog)"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "command": "verilog-helper.fixBeginEnd",
+          "when": "editorLangId == verilog || editorLangId == systemverilog",
+          "group": "navigation"
+        }
+      ]
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.80.0",
+    "@types/node": "16.x",
+    "typescript": "^5.1.3"
+  }
+}
