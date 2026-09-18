@@ -207,6 +207,8 @@ export function calculateEndPositions(lines: string[], insertBeginList: InsertPo
         if (pt.type === 'if' || pt.type === 'elseif' || pt.type === 'else' || pt.type === 'for') {
             let scan = pt.lineIndex + 1;
             let nestLevel = 0;
+            let controlDepth = 0;
+            let caseNest = 0;  // 新增：跳过 case 块
 
             while (scan < totalLines) {
                 const trim = lines[scan].trim();
@@ -215,56 +217,81 @@ export function calculateEndPositions(lines: string[], insertBeginList: InsertPo
                     continue;
                 }
 
-                if (lineStartsWithBegin(trim) || lineEndsWithBegin(trim)) {
-                    nestLevel++;
+                // case 块跟踪
+                if (trim.match(/^case\s*\(/) || trim.match(/^case\s+/)) {
+                    caseNest++;
+                }
+                if (trim === 'endcase') {
+                    if (caseNest > 0) caseNest--;
+                }
+                if (caseNest > 0) {
                     scan++;
                     continue;
+                }
+
+                // begin/end 嵌套
+                if (lineStartsWithBegin(trim) || lineEndsWithBegin(trim)) {
+                    nestLevel++;
                 }
                 if (trim === "end") {
                     if (nestLevel > 0) {
                         nestLevel--;
-                        if (nestLevel === 0) {
-                            let nextScan = scan + 1;
-                            while (nextScan < totalLines) {
-                                const nextTrim = lines[nextScan].trim();
-                                if (nextTrim === "" || nextTrim.startsWith("//")) {
-                                    nextScan++;
-                                    continue;
-                                }
-                                const isIf = isIfLine(lines[nextScan]);
-                                const isElseIf = isElseIfLine(lines[nextScan]);
-                                const isElse = /^else\b/.test(nextTrim);
-                                if (isIf || isElseIf || isElse) {
-                                    scan = nextScan;
-                                    break;
-                                }
-                                endInsertPos = scan + 1;
+                    }
+                }
+
+                // if/else 嵌套深度
+                if (isIfLine(lines[scan]) || isElseIfLine(lines[scan])) {
+                    if (nestLevel === 0) controlDepth++;
+                }
+
+                // else 检查
+                if (/^else\b/.test(trim)) {
+                    const next = getNextEffectiveLine(lines, scan);
+                    const isElseIf = next && (isIfLine(next.line) || isElseIfLine(next.line));
+
+                    if (!isElseIf && nestLevel === 0) {
+                        if (controlDepth > 0) {
+                            controlDepth--;
+                        } else {
+                            if (pt.type === 'if' || pt.type === 'elseif') {
+                                endInsertPos = scan;
+                                break;
+                            } else if (pt.type === 'else') {
+                                endInsertPos = scan;
                                 break;
                             }
-                            if (endInsertPos !== totalLines) break;
                         }
-                    } else {
-                        endInsertPos = scan;
-                        break;
                     }
-                    scan++;
-                    continue;
                 }
 
-                const isIf = isIfLine(lines[scan]);
-                const isElseIf = isElseIfLine(lines[scan]);
-                const isElse = /^else\b/.test(trim);
-                if (isIf || isElseIf || isElse) {
-                    scan++;
-                    continue;
-                }
-
-                if (nestLevel === 0) {
-                    endInsertPos = scan + 1;
-                    break;
+                // 无嵌套时判断结束
+                if (nestLevel === 0 && controlDepth === 0) {
+                    if (pt.type === 'if' || pt.type === 'elseif') {
+                        const isControl = isIfLine(lines[scan]) || isElseIfLine(lines[scan]) || /^else\b/.test(trim);
+                        if (!isControl) {
+                            endInsertPos = scan + 1;
+                            break;
+                        }
+                    } else if (pt.type === 'else') {
+                        const isControl = isIfLine(lines[scan]) || isElseIfLine(lines[scan]) || /^else\b/.test(trim);
+                        if (!isControl) {
+                            endInsertPos = scan + 1;
+                            break;
+                        }
+                    } else if (pt.type === 'for') {
+                        const isControl = isIfLine(lines[scan]) || isElseIfLine(lines[scan]) || /^else\b/.test(trim) || /^for\s*\(/.test(trim);
+                        if (!isControl) {
+                            endInsertPos = scan + 1;
+                            break;
+                        }
+                    }
                 }
 
                 scan++;
+            }
+
+            if (endInsertPos === totalLines) {
+                endInsertPos = totalLines;
             }
 
         } else {
