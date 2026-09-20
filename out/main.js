@@ -74,14 +74,19 @@ async function processDocument() {
         vscode.window.showErrorMessage(beginEndResult.message);
         return;
     }
-    let outputLines = [...lines];
-    let beginCount = beginEndResult.insertBeginList.length;
     const beginEdits = (0, begin_end_1.calculateEndPositions)(lines, beginEndResult.insertBeginList);
-    if (beginEdits.length > 0) {
-        beginEdits.sort((a, b) => b.pos - a.pos);
-        for (const op of beginEdits) {
-            outputLines.splice(op.pos, 0, op.text);
-        }
+    // ★ 改动3：区分 replaceLine（替换原行）和 pos（插入新行）
+    let outputLines = [...lines];
+    const replaces = beginEdits.filter(e => e.replaceLine !== undefined);
+    const inserts = beginEdits.filter(e => e.replaceLine === undefined);
+    // 先处理替换（不影响行号）
+    for (const op of replaces) {
+        outputLines[op.replaceLine] = op.text.trimEnd();
+    }
+    // 再处理插入（倒序，避免行号偏移）
+    inserts.sort((a, b) => b.pos - a.pos);
+    for (const op of inserts) {
+        outputLines.splice(op.pos, 0, op.text);
     }
     // ========= 写入文件 =========
     const finalText = outputLines.join("\n");
@@ -90,7 +95,7 @@ async function processDocument() {
     await editor.edit((editBuilder) => {
         editBuilder.replace(fullRange, finalText);
     });
-    vscode.window.showInformationMessage(`处理完成：补 ${beginCount} 组 begin-end，请务必核对代码！`);
+    vscode.window.showInformationMessage(`处理完成：补 ${beginEndResult.insertBeginList.length} 组 begin-end，请务必核对代码！`);
 }
 function activate(context) {
     const disposable = vscode.commands.registerCommand("verilog-helper.fixBeginEnd", processDocument);

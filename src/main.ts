@@ -3,7 +3,7 @@
  */
 
 import * as vscode from 'vscode';
-import { analyzeBeginEnd, calculateEndPositions } from './begin_end';
+import { analyzeBeginEnd, calculateEndPositions, BeginEndEdit } from './begin_end';
 
 export async function processDocument() {
     const editor = vscode.window.activeTextEditor;
@@ -46,16 +46,22 @@ export async function processDocument() {
         return;
     }
 
+    const beginEdits: BeginEndEdit[] = calculateEndPositions(lines, beginEndResult.insertBeginList);
+
+    // ★ 改动3：区分 replaceLine（替换原行）和 pos（插入新行）
     let outputLines = [...lines];
-    let beginCount = beginEndResult.insertBeginList.length;
+    const replaces = beginEdits.filter(e => e.replaceLine !== undefined);
+    const inserts = beginEdits.filter(e => e.replaceLine === undefined);
 
-    const beginEdits = calculateEndPositions(lines, beginEndResult.insertBeginList);
+    // 先处理替换（不影响行号）
+    for (const op of replaces) {
+        outputLines[op.replaceLine!] = op.text.trimEnd();
+    }
 
-    if (beginEdits.length > 0) {
-        beginEdits.sort((a, b) => b.pos - a.pos);
-        for (const op of beginEdits) {
-            outputLines.splice(op.pos, 0, op.text);
-        }
+    // 再处理插入（倒序，避免行号偏移）
+    inserts.sort((a, b) => b.pos - a.pos);
+    for (const op of inserts) {
+        outputLines.splice(op.pos, 0, op.text);
     }
 
     // ========= 写入文件 =========
@@ -70,7 +76,7 @@ export async function processDocument() {
         editBuilder.replace(fullRange, finalText);
     });
 
-    vscode.window.showInformationMessage(`处理完成：补 ${beginCount} 组 begin-end，请务必核对代码！`);
+    vscode.window.showInformationMessage(`处理完成：补 ${beginEndResult.insertBeginList.length} 组 begin-end，请务必核对代码！`);
 }
 
 export function activate(context: vscode.ExtensionContext) {
