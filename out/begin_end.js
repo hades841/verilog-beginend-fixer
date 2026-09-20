@@ -1,6 +1,6 @@
 "use strict";
 /**
- * begin_end.ts - begin/end 检测与插入逻辑
+ * begin_end.ts - begin/end 检测与插入逻辑（纯插入，不含代码检查）
  */
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.analyzeBeginEnd = analyzeBeginEnd;
@@ -164,7 +164,6 @@ function parseInlineControl(line) {
         return { head: trimmed, stmt: trimmed };
     const head = trimmed.substring(0, endParen + 1);
     let stmt = trimmed.substring(endParen + 1).trim();
-    // ★ 修复：不再去掉分号
     return { head, stmt };
 }
 function analyzeBeginEnd(lines) {
@@ -283,6 +282,7 @@ function calculateEndPositions(lines, list) {
             }
             continue;
         }
+        // 正常插入 begin
         edits.push({ pos: point.lineIndex + 1, text: point.indent + 'begin' });
         let endPos = N;
         let depth = 0;
@@ -317,6 +317,11 @@ function calculateEndPositions(lines, list) {
                 if (point.type === 'if' || point.type === 'elseif' || point.type === 'else') {
                     if (isIfLine(lines[i]) || isElseIfLine(lines[i]) || /^else\b/.test(trimmed)) {
                         endPos = i;
+                        break;
+                    }
+                    // 遇到普通行就停（只包一行）
+                    if (!lineStartsWithBegin(trimmed) && !lineEndsWithBegin(trimmed)) {
+                        endPos = i + 1;
                         break;
                     }
                 }

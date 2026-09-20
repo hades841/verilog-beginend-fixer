@@ -5,6 +5,43 @@
 import * as vscode from 'vscode';
 import { analyzeBeginEnd, calculateEndPositions, BeginEndEdit } from './begin_end';
 
+// 检查 begin/end 是否配对
+function checkBeginEndBalance(lines: string[]): { valid: boolean; beginCount: number; endCount: number } {
+    let beginCount = 0;
+    let endCount = 0;
+
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed === '' || trimmed.startsWith('//')) continue;
+
+        // 行首 begin 或 行尾 begin
+        if (/^\s*begin\b/.test(trimmed) || /\bbegin\s*(?::\s*\w+)?\s*$/.test(trimmed.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '').trim())) {
+            beginCount++;
+        }
+        // 独立 end 行
+        if (/^\s*end\s*(?::\s*\w+)?\s*$/.test(trimmed)) {
+            endCount++;
+        }
+    }
+
+    return { valid: beginCount === endCount, beginCount, endCount };
+}
+
+// 检查 VS Code 诊断错误
+function checkVSCodeDiagnostics(): string | null {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) return null;
+
+    const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
+    const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
+
+    if (errors.length > 0) {
+        const firstError = errors[0];
+        return `代码有问题，请修改：VS Code 检测到第 ${firstError.range.start.line + 1} 行有错误 - "${firstError.message}"`;
+    }
+    return null;
+}
+
 export async function processDocument() {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -38,6 +75,24 @@ export async function processDocument() {
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
+    // ========= 前置检查 =========
+
+    // 1. VS Code 诊断检查
+    const diagError = checkVSCodeDiagnostics();
+    if (diagError) {
+        vscode.window.showErrorMessage(diagError);
+        return;
+    }
+
+    // 2. begin/end 配对检查
+    const balance = checkBeginEndBalance(lines);
+    if (!balance.valid) {
+        vscode.window.showErrorMessage(
+            `代码有问题，请修改：begin（${balance.beginCount}个）与 end（${balance.endCount}个）数量不匹配，请先修复后再使用本功能。`
+        );
+        return;
+    }
+
     // ========= begin/end 处理 =========
     const beginEndResult = analyzeBeginEnd(lines);
 
@@ -48,7 +103,7 @@ export async function processDocument() {
 
     const beginEdits: BeginEndEdit[] = calculateEndPositions(lines, beginEndResult.insertBeginList);
 
-    // ★ 改动3：区分 replaceLine（替换原行）和 pos（插入新行）
+    // 区分 replaceLine（替换原行）和 pos（插入新行）
     let outputLines = [...lines];
     const replaces = beginEdits.filter(e => e.replaceLine !== undefined);
     const inserts = beginEdits.filter(e => e.replaceLine === undefined);
