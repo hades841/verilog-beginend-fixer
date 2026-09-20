@@ -65,7 +65,6 @@ function isElseIfLine(line: string): boolean {
   return false;
 }
 
-// 修复：正确识别内联语句，排除 else begin / else if
 function hasInlineStatement(line: string): boolean {
   const noLineComment = line.replace(/\/\/.*$/, '');
   const noBlockComment = noLineComment.replace(/\/\*.*?\*\//, '').trim();
@@ -73,17 +72,32 @@ function hasInlineStatement(line: string): boolean {
   if (/\bbegin\s*(?::\s*\w+)?\s*$/.test(noBlockComment)) return false;
   if (/\)\s*$/.test(noBlockComment)) return false;
 
-  // else 同行语句检测
   const elseMatch = noBlockComment.match(/^else\s+(.*)/);
   if (elseMatch) {
     const afterElse = elseMatch[1].trim();
-    // 排除 else if / else begin
-    if (afterElse && !afterElse.startsWith('if') && !afterElse.startsWith('begin')) {
+    if (afterElse.startsWith('if')) {
+      let p = afterElse.indexOf('(');
+      if (p >= 0) {
+        let depth = 0;
+        for (let i = p; i < afterElse.length; i++) {
+          if (afterElse[i] === '(') depth++;
+          else if (afterElse[i] === ')') {
+            depth--;
+            if (depth === 0) {
+              let rest = afterElse.substring(i + 1).trim();
+              if (rest.includes(';')) return true;
+              break;
+            }
+          }
+        }
+      }
+      return false;
+    }
+    if (afterElse && !afterElse.startsWith('begin')) {
       return true;
     }
   }
 
-  // if/for 同行语句检测
   if (/^if\s*\(/.test(noBlockComment) || /^for\s*\(/.test(noBlockComment)) {
     let depth = 0;
     for (let i = 0; i < noBlockComment.length; i++) {
@@ -105,17 +119,43 @@ function lineHasKeyword(line: string): boolean {
          /^for\s*\(/.test(trimmed);
 }
 
+function isCaseLabel(line: string): boolean {
+  const t = line.trim();
+  if (/^\d+\s*'[bdh]?\w*\s*:/.test(t)) return true;
+  if (/^default\s*:/.test(t)) return true;
+  if (/^\w+\s*:/.test(t) && !lineHasKeyword(line) && !t.startsWith('begin') && !t.startsWith('end')) return true;
+  return false;
+}
+
+function parseInlineControl(line: string): { head: string, stmt: string } {
+  const trimmed = line.trim();
+  let p = trimmed.indexOf('(');
+  if (p < 0) return { head: trimmed, stmt: trimmed };
+  let depth = 0;
+  let endParen = -1;
+  for (let i = p; i < trimmed.length; i++) {
+    if (trimmed[i] === '(') depth++;
+    else if (trimmed[i] === ')') { depth--; if (depth === 0) { endParen = i; break; } }
+  }
+  if (endParen < 0) return { head: trimmed, stmt: trimmed };
+  const head = trimmed.substring(0, endParen + 1);
+  let stmt = trimmed.substring(endParen + 1).trim();
+  // ★ 修复：不再去掉分号
+  return { head, stmt };
+}
+
 export interface InsertPoint {
   lineIndex: number;
   indent: string;
   type: 'always' | 'if' | 'elseif' | 'else' | 'for';
-  inlineStmt?: string; // 新增：同行语句内容
+  inlineStmt?: string;
+  inCase?: boolean;
 }
 
 export interface BeginEndEdit {
   pos: number;
   text: string;
-  replaceLine?: number; // 新增：需要替换的行号
+  replaceLine?: number;
 }
 
 export function analyzeBeginEnd(lines: string[]): { success: boolean; message: string; insertBeginList: InsertPoint[]; totalLines: number } {
@@ -135,22 +175,25 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
     if (trimmed === 'endcase' && caseDepth > 0) {
       caseDepth--;
     }
-    if (caseDepth > 0) continue;
 
-    // if/else 同行语句不报错，记录 inlineStmt
+    if (caseDepth > 0 && isCaseLabel(line)) {
+      continue;
+    }
+
     if (lineHasKeyword(line) && hasInlineStatement(line)) {
       const keywordTrim = trimmed;
       if (keywordTrim.startsWith('else')) {
-        // else stmt; → 提取语句
         const elseBody = keywordTrim.substring(4).trim();
         if (elseBody && !elseBody.startsWith('if') && !elseBody.startsWith('begin')) {
           const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-          insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody });
+          insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody, inCase: caseDepth > 0 });
+        } else if (elseBody && elseBody.startsWith('if')) {
+          const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+          insertBeginList.push({ lineIndex: i, indent, type: 'elseif', inlineStmt: '__INLINE__', inCase: caseDepth > 0 });
         }
       } else if (keywordTrim.startsWith('if') || keywordTrim.startsWith('for')) {
-        // if (a) stmt; / for(...) stmt;
         const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-        insertBeginList.push({ lineIndex: i, indent, type: keywordTrim.startsWith('for') ? 'for' : 'if', inlineStmt: '__INLINE__' });
+        insertBeginList.push({ lineIndex: i, indent, type: keywordTrim.startsWith('for') ? 'for' : 'if', inlineStmt: '__INLINE__', inCase: caseDepth > 0 });
       }
       continue;
     }
@@ -171,14 +214,14 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
 
     if (isIfLine(line)) {
       if (shouldInsertBegin(lines, i, trimmed)) {
-        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'if' });
+        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'if', inCase: caseDepth > 0 });
       }
       continue;
     }
 
     if (isElseIfLine(line)) {
       if (shouldInsertBegin(lines, i, trimmed)) {
-        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'elseif' });
+        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'elseif', inCase: caseDepth > 0 });
       }
       continue;
     }
@@ -189,14 +232,14 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
         continue;
       }
       if (shouldInsertBegin(lines, i, trimmed)) {
-        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'else' });
+        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'else', inCase: caseDepth > 0 });
       }
       continue;
     }
 
     if (trimmed.match(/^for\s*\(/)) {
       if (shouldInsertBegin(lines, i, trimmed)) {
-        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'for' });
+        insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'for', inCase: caseDepth > 0 });
       }
       continue;
     }
@@ -218,9 +261,7 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
 
   for (const point of list) {
     if (point.inlineStmt) {
-      // 同行语句：替换原行 + 插入 begin/end
       if (point.type === 'else' && point.inlineStmt !== '__INLINE__') {
-        // else yn_state_reg <= 4'd2; → else\nbegin\n    yn_state_reg <= 4'd2;\nend
         edits.push({
           pos: point.lineIndex + 1,
           text: `${point.indent}begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`
@@ -230,20 +271,21 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
           text: `${point.indent}else\n`,
           replaceLine: point.lineIndex
         });
-      } else {
-        // if (a) stmt; / for(...) stmt; → 在行后插入 begin/end
-        edits.push({ pos: point.lineIndex + 1, text: `${point.indent}begin` });
-        edits.push({ pos: point.lineIndex + 2, text: `${point.indent}end` });
+      } else if (point.type === 'elseif' || point.type === 'if' || point.type === 'for') {
+        const { head, stmt } = parseInlineControl(lines[point.lineIndex]);
         edits.push({
           pos: point.lineIndex + 1,
-          text: `${point.indent}`,
+          text: `${point.indent}begin\n${point.indent}    ${stmt}\n${point.indent}end`
+        });
+        edits.push({
+          pos: point.lineIndex + 1,
+          text: `${point.indent}${head}\n`,
           replaceLine: point.lineIndex
         });
       }
       continue;
     }
 
-    // 正常插入 begin
     edits.push({ pos: point.lineIndex + 1, text: point.indent + 'begin' });
 
     let endPos = N;
@@ -255,7 +297,13 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
       if (trimmed === "" || trimmed.startsWith("//")) continue;
 
       if (trimmed.match(/^case\s*\(/) || trimmed.match(/^case\s+/)) caseLevel++;
-      if (trimmed === 'endcase') caseLevel--;
+      if (trimmed === 'endcase') {
+        if (caseLevel > 0) caseLevel--;
+        if (point.inCase && caseLevel === 0) {
+          endPos = i;
+          break;
+        }
+      }
       if (caseLevel > 0) continue;
 
       if (lineStartsWithBegin(trimmed) || lineEndsWithBegin(trimmed)) depth++;
@@ -269,7 +317,7 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
 
       if (depth === 0) {
         if (point.type === 'if' || point.type === 'elseif' || point.type === 'else') {
-          if (isIfLine(lines[i]) || isElseIfLine(lines[i]) || trimmed.match(/^else\b/)) {
+          if (isIfLine(lines[i]) || isElseIfLine(lines[i]) || /^else\b/.test(trimmed)) {
             endPos = i;
             break;
           }
@@ -285,7 +333,6 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
     edits.push({ pos: endPos, text: point.indent + 'end' });
   }
 
-  // 按 pos 倒序，replaceLine 优先
   edits.sort((a, b) => {
     if (a.replaceLine !== undefined && b.replaceLine === undefined) return -1;
     if (a.replaceLine === undefined && b.replaceLine !== undefined) return 1;
