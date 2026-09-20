@@ -2,6 +2,23 @@
  * begin_end.ts - begin/end 检测与插入逻辑（纯插入，不含代码检查）
  */
 
+function findConditionEnd(lines: string[], startLineIndex: number): number {
+    let depth = 0;
+    let foundOpen = false;
+
+    for (let i = startLineIndex; i < lines.length; i++) {
+        const noComment = lines[i].replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '');
+        for (let j = 0; j < noComment.length; j++) {
+            if (noComment[j] === '(') { depth++; foundOpen = true; }
+            else if (noComment[j] === ')') { depth--; }
+        }
+        if (foundOpen && depth === 0) {
+            return i;
+        }
+    }
+    return startLineIndex;
+}
+
 function lineEndsWithBegin(trimmed: string): boolean {
     const noComment = trimmed.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '');
     return /\bbegin\s*(?::\s*\w+)?\s*$/.test(noComment.trim());
@@ -24,45 +41,11 @@ function getNextEffectiveLine(lines: string[], fromIndex: number): { line: strin
     return null;
 }
 
-function shouldInsertBegin(lines: string[], lineIndex: number, trimmedLine: string): boolean {
-    if (lineEndsWithBegin(trimmedLine)) return false;
-    const next = getNextEffectiveLine(lines, lineIndex);
+function shouldInsertBegin(lines: string[], lineIndex: number, condEndLine: number): boolean {
+    if (lineEndsWithBegin(lines[lineIndex].trim())) return false;
+    const next = getNextEffectiveLine(lines, condEndLine);
     if (next && lineStartsWithBegin(next.trimmed)) return false;
     return true;
-}
-
-function isIfLine(line: string): boolean {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('if')) return false;
-    const parenIdx = trimmed.indexOf('(');
-    if (parenIdx === -1) return false;
-    let depth = 0;
-    for (let i = parenIdx; i < trimmed.length; i++) {
-        if (trimmed[i] === '(') depth++;
-        else if (trimmed[i] === ')') {
-            depth--;
-            if (depth === 0) return true;
-        }
-    }
-    return false;
-}
-
-function isElseIfLine(line: string): boolean {
-    const trimmed = line.trim();
-    if (!trimmed.startsWith('else')) return false;
-    const ifIdx = trimmed.indexOf('if');
-    if (ifIdx === -1) return false;
-    const parenIdx = trimmed.indexOf('(', ifIdx);
-    if (parenIdx === -1) return false;
-    let depth = 0;
-    for (let i = parenIdx; i < trimmed.length; i++) {
-        if (trimmed[i] === '(') depth++;
-        else if (trimmed[i] === ')') {
-            depth--;
-            if (depth === 0) return true;
-        }
-    }
-    return false;
 }
 
 function hasInlineStatement(line: string): boolean {
@@ -145,10 +128,10 @@ function parseInlineControl(line: string): { head: string, stmt: string } {
 
 export interface InsertPoint {
     lineIndex: number;
+    condEndLine?: number;
     indent: string;
     type: 'always' | 'if' | 'elseif' | 'else' | 'for';
     inlineStmt?: string;
-    inCase?: boolean;
 }
 
 export interface BeginEndEdit {
@@ -179,66 +162,132 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
             continue;
         }
 
-        if (lineHasKeyword(line) && hasInlineStatement(line)) {
-            const keywordTrim = trimmed;
-            if (keywordTrim.startsWith('else')) {
-                const elseBody = keywordTrim.substring(4).trim();
-                if (elseBody && !elseBody.startsWith('if') && !elseBody.startsWith('begin')) {
-                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                    insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody, inCase: caseDepth > 0 });
-                } else if (elseBody && elseBody.startsWith('if')) {
-                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                    insertBeginList.push({ lineIndex: i, indent, type: 'elseif', inlineStmt: '__INLINE__', inCase: caseDepth > 0 });
-                }
-            } else if (keywordTrim.startsWith('if') || keywordTrim.startsWith('for')) {
-                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                insertBeginList.push({ lineIndex: i, indent, type: keywordTrim.startsWith('for') ? 'for' : 'if', inlineStmt: '__INLINE__', inCase: caseDepth > 0 });
-            }
-            continue;
-        }
-
+        // ===== always =====
         if (trimmed.match(/^always\s*@\s*\([^)]*\)/)) {
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'always' });
+            const condEndLine = findConditionEnd(lines, i);
+            const condEndTrimmed = lines[condEndLine].trim();
+            const afterParen = condEndTrimmed.substring(condEndTrimmed.lastIndexOf(')') + 1).trim();
+
+            if (afterParen && !afterParen.startsWith('begin') && !afterParen.startsWith('//') && afterParen !== ';') {
+                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                insertBeginList.push({ lineIndex: i, indent, type: 'always', inlineStmt: '__INLINE__' });
+            } else {
+                if (shouldInsertBegin(lines, i, condEndLine)) {
+                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                    insertBeginList.push({ lineIndex: i, condEndLine: condEndLine !== i ? condEndLine : undefined, indent, type: 'always' });
+                }
             }
             continue;
         }
 
+        // ===== initial =====
         if (trimmed.match(/^initial\b/)) {
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'always' });
+            const afterInitial = trimmed.substring(7).trim();
+            if (afterInitial && !afterInitial.startsWith('begin') && !afterInitial.startsWith('//')) {
+                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                insertBeginList.push({ lineIndex: i, indent, type: 'always', inlineStmt: '__INLINE__' });
+            } else {
+                if (shouldInsertBegin(lines, i, i)) {
+                    insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'always' });
+                }
             }
             continue;
         }
 
-        if (isIfLine(line)) {
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'if', inCase: caseDepth > 0 });
-            }
-            continue;
-        }
+        // ===== else =====
+        if (trimmed.match(/^(?:end\s+)?else\b/)) {
+            const elseBody = trimmed.replace(/^(?:end\s+)?else\b/, '').trim();
 
-        if (isElseIfLine(line)) {
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'elseif', inCase: caseDepth > 0 });
-            }
-            continue;
-        }
+            if (elseBody.startsWith('if')) {
+                const condEndLine = findConditionEnd(lines, i);
+                const condEndTrimmed = lines[condEndLine].trim();
 
-        if (trimmed.match(/^else\b/)) {
-            const next = getNextEffectiveLine(lines, i);
-            if (next && (isIfLine(next.line) || isElseIfLine(next.line))) {
+                const nextAfterCond = getNextEffectiveLine(lines, condEndLine);
+                if (nextAfterCond && lineStartsWithBegin(nextAfterCond.trimmed)) continue;
+                if (lineEndsWithBegin(condEndTrimmed)) continue;
+
+                if (condEndLine === i && hasInlineStatement(line)) {
+                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                    insertBeginList.push({ lineIndex: i, indent, type: 'elseif', inlineStmt: '__INLINE__' });
+                } else {
+                    if (shouldInsertBegin(lines, i, condEndLine)) {
+                        const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                        insertBeginList.push({ lineIndex: i, condEndLine: condEndLine !== i ? condEndLine : undefined, indent, type: 'elseif' });
+                    }
+                }
                 continue;
             }
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'else', inCase: caseDepth > 0 });
+
+            if (elseBody === '') {
+                const next = getNextEffectiveLine(lines, i);
+                if (next && next.trimmed.startsWith('if')) {
+                    // 换行的 else/if 是嵌套语句，不能按 else if 处理。
+                    if (shouldInsertBegin(lines, i, i)) {
+                        const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                        insertBeginList.push({ lineIndex: i, indent, type: 'else' });
+                    }
+                } else {
+                    if (shouldInsertBegin(lines, i, i)) {
+                        const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                        insertBeginList.push({ lineIndex: i, indent, type: 'else' });
+                    }
+                }
+                continue;
+            }
+
+            if (!elseBody.startsWith('begin')) {
+                if (hasInlineStatement(line)) {
+                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                    insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody });
+                } else {
+                    if (shouldInsertBegin(lines, i, i)) {
+                        const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                        insertBeginList.push({ lineIndex: i, indent, type: 'else' });
+                    }
+                }
             }
             continue;
         }
 
+        // ===== if =====
+        if (trimmed.startsWith('if')) {
+            const condEndLine = findConditionEnd(lines, i);
+            const condEndTrimmed = lines[condEndLine].trim();
+
+            if (lineEndsWithBegin(condEndTrimmed)) continue;
+            const nextAfterCond = getNextEffectiveLine(lines, condEndLine);
+            if (nextAfterCond && lineStartsWithBegin(nextAfterCond.trimmed)) continue;
+
+            // 检查 if 后是否紧跟 else/else if
+            if (condEndLine === i && hasInlineStatement(line)) {
+                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                insertBeginList.push({ lineIndex: i, indent, type: 'if', inlineStmt: '__INLINE__' });
+            } else {
+                if (shouldInsertBegin(lines, i, condEndLine)) {
+                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                    insertBeginList.push({ lineIndex: i, condEndLine: condEndLine !== i ? condEndLine : undefined, indent, type: 'if' });
+                }
+            }
+            continue;
+        }
+
+        // ===== for =====
         if (trimmed.match(/^for\s*\(/)) {
-            if (shouldInsertBegin(lines, i, trimmed)) {
-                insertBeginList.push({ lineIndex: i, indent: (line.match(/^(\s*)/) || ['', ''])[1], type: 'for', inCase: caseDepth > 0 });
+            const condEndLine = findConditionEnd(lines, i);
+            const condEndTrimmed = lines[condEndLine].trim();
+
+            if (lineEndsWithBegin(condEndTrimmed)) continue;
+            const nextAfterCond = getNextEffectiveLine(lines, condEndLine);
+            if (nextAfterCond && lineStartsWithBegin(nextAfterCond.trimmed)) continue;
+
+            if (condEndLine === i && hasInlineStatement(line)) {
+                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                insertBeginList.push({ lineIndex: i, indent, type: 'for', inlineStmt: '__INLINE__' });
+            } else {
+                if (shouldInsertBegin(lines, i, condEndLine)) {
+                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                    insertBeginList.push({ lineIndex: i, condEndLine: condEndLine !== i ? condEndLine : undefined, indent, type: 'for' });
+                }
             }
             continue;
         }
@@ -252,15 +301,98 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
     };
 }
 
+/** 返回从 startLine 开始的完整语句之后的行号。 */
+function findStatementEnd(lines: string[], startLine: number): number {
+    const first = getNextEffectiveLine(lines, startLine - 1);
+    if (!first) return lines.length;
+
+    const index = first.index;
+    const trimmed = first.trimmed;
+    if (lineStartsWithBegin(trimmed)) {
+        let depth = 0;
+        for (let i = index; i < lines.length; i++) {
+            const text = lines[i].replace(/\/\/.*$/, '').trim();
+            if (lineStartsWithBegin(text)) depth++;
+            if (/^end\b/.test(text) && --depth === 0) return i + 1;
+        }
+        return lines.length;
+    }
+
+    if (/^case(?:x|z)?\b/.test(trimmed)) {
+        let depth = 0;
+        for (let i = index; i < lines.length; i++) {
+            const text = lines[i].replace(/\/\/.*$/, '').trim();
+            if (/^case(?:x|z)?\b/.test(text)) depth++;
+            if (text === 'endcase' && --depth === 0) return i + 1;
+        }
+        return lines.length;
+    }
+
+    if (/^else\b/.test(trimmed) && !/^else\s+if\b/.test(trimmed)) {
+        const body = trimmed.substring(4).trim();
+        if (body === '') return findStatementEnd(lines, index + 1);
+        if (lineEndsWithBegin(trimmed)) return findStatementEnd(lines, index);
+        return index + 1;
+    }
+
+    const isIf = /^if\s*\(/.test(trimmed) || /^else\s+if\s*\(/.test(trimmed);
+    const isControl = isIf || /^for\s*\(/.test(trimmed) || /^always\b/.test(trimmed) || /^initial\b/.test(trimmed);
+    if (!isControl) return index + 1;
+
+    const conditionEnd = /^initial\b/.test(trimmed) ? index : findConditionEnd(lines, index);
+    const conditionText = lines[conditionEnd].replace(/\/\/.*$/, '').trim();
+    const afterCondition = /^initial\b/.test(trimmed)
+        ? conditionText.substring('initial'.length).trim()
+        : conditionText.substring(conditionText.lastIndexOf(')') + 1).trim();
+    if (afterCondition !== '' && !afterCondition.startsWith('begin')) return conditionEnd + 1;
+
+    let end = findStatementEnd(lines, conditionEnd + 1);
+    // 外层 if 的分支可能是未加 begin/end 的嵌套 if/else。
+    if (isIf) {
+        const next = getNextEffectiveLine(lines, end - 1);
+        if (next && /^else\b/.test(next.trimmed)) end = findStatementEnd(lines, next.index);
+    }
+    return end;
+}
+
+function findControlBodyEnd(lines: string[], point: InsertPoint): number {
+    if (point.type === 'else') return findStatementEnd(lines, point.lineIndex + 1);
+    return findStatementEnd(lines, (point.condEndLine ?? point.lineIndex) + 1);
+}
+
 export function calculateEndPositions(lines: string[], list: InsertPoint[]): BeginEndEdit[] {
     const edits: BeginEndEdit[] = [];
-    const N = lines.length;
-
-    const moduleKeywords = /^(module|endmodule|function|endfunction|task|endtask|always|initial|assign|wire|reg|input|output|inout|parameter)\b/;
 
     for (const point of list) {
+
+        // ===== 内联语句处理 =====
         if (point.inlineStmt) {
-            if (point.type === 'else' && point.inlineStmt !== '__INLINE__') {
+            if (point.type === 'always') {
+                const line = lines[point.lineIndex];
+                const trimmed = line.trim();
+                let head: string, stmt: string;
+                if (trimmed.startsWith('always')) {
+                    let lastParen = trimmed.lastIndexOf(')');
+                    if (lastParen < 0) lastParen = 0;
+                    head = trimmed.substring(0, lastParen + 1);
+                    stmt = trimmed.substring(lastParen + 1).trim();
+                } else if (trimmed.startsWith('initial')) {
+                    head = 'initial';
+                    stmt = trimmed.substring(7).trim();
+                } else {
+                    head = trimmed;
+                    stmt = '';
+                }
+                edits.push({
+                    pos: point.lineIndex + 1,
+                    text: `${point.indent}begin\n${point.indent}    ${stmt}\n${point.indent}end`
+                });
+                edits.push({
+                    pos: point.lineIndex + 1,
+                    text: `${point.indent}${head}\n`,
+                    replaceLine: point.lineIndex
+                });
+            } else if (point.type === 'else' && point.inlineStmt !== '__INLINE__') {
                 edits.push({
                     pos: point.lineIndex + 1,
                     text: `${point.indent}begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`
@@ -285,56 +417,11 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
             continue;
         }
 
-        // 正常插入 begin
-        edits.push({ pos: point.lineIndex + 1, text: point.indent + 'begin' });
+        // ===== 非内联：插入 begin =====
+        const beginInsertPos = (point.condEndLine !== undefined ? point.condEndLine : point.lineIndex) + 1;
+        edits.push({ pos: beginInsertPos, text: point.indent + 'begin' });
 
-        let endPos = N;
-        let depth = 0;
-        let caseLevel = 0;
-
-        for (let i = point.lineIndex + 1; i < N; i++) {
-            const trimmed = lines[i].trim();
-            if (trimmed === "" || trimmed.startsWith("//")) continue;
-
-            if (trimmed.match(/^case\s*\(/) || trimmed.match(/^case\s+/)) caseLevel++;
-            if (trimmed === 'endcase') {
-                if (caseLevel > 0) caseLevel--;
-                if (point.inCase && caseLevel === 0) {
-                    endPos = i;
-                    break;
-                }
-            }
-            if (caseLevel > 0) continue;
-
-            if (lineStartsWithBegin(trimmed) || lineEndsWithBegin(trimmed)) depth++;
-            if (trimmed === 'end') {
-                if (depth > 0) depth--;
-                else {
-                    endPos = i;
-                    break;
-                }
-            }
-
-            if (depth === 0) {
-                if (point.type === 'if' || point.type === 'elseif' || point.type === 'else') {
-                    if (isIfLine(lines[i]) || isElseIfLine(lines[i]) || /^else\b/.test(trimmed)) {
-                        endPos = i;
-                        break;
-                    }
-                    // 遇到普通行就停（只包一行）
-                    if (!lineStartsWithBegin(trimmed) && !lineEndsWithBegin(trimmed)) {
-                        endPos = i + 1;
-                        break;
-                    }
-                } else if (point.type === 'always') {
-                    if (trimmed.match(/^always\s*@\s*\(/) || trimmed.match(/^initial\b/) || moduleKeywords.test(trimmed)) {
-                        endPos = i;
-                        break;
-                    }
-                }
-            }
-        }
-
+        const endPos = findControlBodyEnd(lines, point);
         edits.push({ pos: endPos, text: point.indent + 'end' });
     }
 

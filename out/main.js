@@ -41,25 +41,6 @@ exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
 const begin_end_1 = require("./begin_end");
-// 检查 begin/end 是否配对
-function checkBeginEndBalance(lines) {
-    let beginCount = 0;
-    let endCount = 0;
-    for (const line of lines) {
-        const trimmed = line.trim();
-        if (trimmed === '' || trimmed.startsWith('//'))
-            continue;
-        // 行首 begin 或 行尾 begin
-        if (/^\s*begin\b/.test(trimmed) || /\bbegin\s*(?::\s*\w+)?\s*$/.test(trimmed.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '').trim())) {
-            beginCount++;
-        }
-        // 独立 end 行
-        if (/^\s*end\s*(?::\s*\w+)?\s*$/.test(trimmed)) {
-            endCount++;
-        }
-    }
-    return { valid: beginCount === endCount, beginCount, endCount };
-}
 // 检查 VS Code 诊断错误
 function checkVSCodeDiagnostics() {
     const editor = vscode.window.activeTextEditor;
@@ -105,12 +86,6 @@ async function processDocument() {
     const diagError = checkVSCodeDiagnostics();
     if (diagError) {
         vscode.window.showErrorMessage(diagError);
-        return;
-    }
-    // 2. begin/end 配对检查
-    const balance = checkBeginEndBalance(lines);
-    if (!balance.valid) {
-        vscode.window.showErrorMessage(`代码有问题，请修改：begin（${balance.beginCount}个）与 end（${balance.endCount}个）数量不匹配，请先修复后再使用本功能。`);
         return;
     }
     // ========= begin/end 处理 =========

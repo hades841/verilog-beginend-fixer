@@ -4,6 +4,10 @@
   "publisher": "local",
   "description": "Auto add begin/end for always/if/else/for in Verilog",
   "version": "1.3.0",
+  "scripts": {
+    "compile": "tsc -p .",
+    "test": "npm run compile && node out/begin_end.test.js"
+  },
   "engines": { "vscode": "^1.80.0" },
   "categories": ["Other"],
   "activationEvents": ["onCommand:verilog-helper.fixBeginEnd"],
