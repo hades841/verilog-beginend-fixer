@@ -28,6 +28,16 @@ function lineStartsWithBegin(trimmed: string): boolean {
     return trimmed.startsWith('begin');
 }
 
+// 将 begin 追加到代码末尾，并保留行尾注释。
+function appendBeginToLine(line: string): string {
+    const lineComment = line.indexOf('//');
+    const blockComment = line.match(/\/\*.*\*\/\s*$/)?.index ?? -1;
+    const commentIndex = lineComment >= 0 ? lineComment : blockComment >= 0 ? blockComment : line.length;
+    const code = line.substring(0, commentIndex).trimEnd();
+    const comment = line.substring(commentIndex).trim();
+    return `${code} begin${comment ? ` ${comment}` : ''}`;
+}
+
 function getNextEffectiveLine(lines: string[], fromIndex: number): { line: string; trimmed: string; index: number } | null {
     let i = fromIndex + 1;
     while (i < lines.length) {
@@ -418,8 +428,12 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
         }
 
         // ===== 非内联：插入 begin =====
-        const beginInsertPos = (point.condEndLine !== undefined ? point.condEndLine : point.lineIndex) + 1;
-        edits.push({ pos: beginInsertPos, text: point.indent + 'begin' });
+        const beginLine = point.condEndLine ?? point.lineIndex;
+        edits.push({
+            pos: beginLine + 1,
+            text: appendBeginToLine(lines[beginLine]),
+            replaceLine: beginLine
+        });
 
         const endPos = findControlBodyEnd(lines, point);
         edits.push({ pos: endPos, text: point.indent + 'end' });

@@ -36,8 +36,8 @@ export async function processDocument() {
         return;
     }
 
-    // .v 文件且文件名以 _tb 结尾 → 跳过
-    if (fileName.endsWith(".v")) {
+    // .v/.sv文件且文件名以 _tb 结尾 → 跳过
+    if (fileName.endsWith(".v")||fileName.endsWith(".sv")) {
         const baseName = fileName.substring(0, fileName.length - 2);
         if (baseName.endsWith("_tb")) {
             vscode.window.showInformationMessage("Testbench 文件不进行处理");
