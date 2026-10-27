@@ -3,22 +3,9 @@
  */
 
 import * as vscode from 'vscode';
+import * as path from 'path';
 import { analyzeBeginEnd, calculateEndPositions, BeginEndEdit } from './begin_end';
-
-// 检查 VS Code 诊断错误
-function checkVSCodeDiagnostics(): string | null {
-    const editor = vscode.window.activeTextEditor;
-    if (!editor) return null;
-
-    const diagnostics = vscode.languages.getDiagnostics(editor.document.uri);
-    const errors = diagnostics.filter(d => d.severity === vscode.DiagnosticSeverity.Error);
-
-    if (errors.length > 0) {
-        const firstError = errors[0];
-        return `代码有问题，请修改：VS Code 检测到第 ${firstError.range.start.line + 1} 行有错误 - "${firstError.message}"`;
-    }
-    return null;
-}
+import { validateWithVivado } from './vivado_validator';
 
 export async function processDocument() {
     const editor = vscode.window.activeTextEditor;
@@ -53,14 +40,6 @@ export async function processDocument() {
     const text = doc.getText();
     const lines = text.split(/\r?\n/);
 
-    // ========= 前置检查 =========
-
-    // 1. VS Code 诊断检查
-    const diagError = checkVSCodeDiagnostics();
-    if (diagError) {
-        vscode.window.showErrorMessage(diagError);
-        return;
-    }
     // ========= begin/end 处理 =========
     const beginEndResult = analyzeBeginEnd(lines);
 
@@ -89,6 +68,20 @@ export async function processDocument() {
 
     // ========= 写入文件 =========
     const finalText = outputLines.join("\n");
+    const config = vscode.workspace.getConfiguration('verilog-helper');
+    const workspacePath = vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? path.dirname(fileName);
+    const vivadoResult = await validateWithVivado(
+        fileName,
+        finalText,
+        path.join(workspacePath, '.verilog-helper-logs'),
+        config.get<string>('vivadoPath', ''),
+        config.get<number>('vivadoTimeoutMs', 120000)
+    );
+    if (!vivadoResult.success) {
+        vscode.window.showErrorMessage(`${vivadoResult.message} 未修改文件；日志：${vivadoResult.logPath}`);
+        return;
+    }
+
     const lastLine = doc.lineAt(doc.lineCount - 1);
     const fullRange = new vscode.Range(
         new vscode.Position(0, 0),
@@ -99,7 +92,7 @@ export async function processDocument() {
         editBuilder.replace(fullRange, finalText);
     });
 
-    vscode.window.showInformationMessage(`处理完成：补 ${beginEndResult.insertBeginList.length} 组 begin-end，请务必核对代码！`);
+    vscode.window.showInformationMessage(`处理完成：补 ${beginEndResult.insertBeginList.length} 组 begin-end；Vivado 日志：${vivadoResult.logPath}`);
 }
 
 export function activate(context: vscode.ExtensionContext) {

@@ -5,13 +5,32 @@ function transform(source: string): { output: string; insertions: number } {
     const lines = source.trim().split('\n');
     const result = analyzeBeginEnd(lines);
     assert.ok(result.success, result.message);
+    const output = applyEdits(lines, calculateEndPositions(lines, result.insertBeginList)).join('\n');
     return {
-        output: applyEdits(lines, calculateEndPositions(lines, result.insertBeginList)).join('\n'),
+        output,
         insertions: result.insertBeginList.length
     };
 }
 
 const cases: Array<{ name: string; source: string; expectedInsertions: number; checks: (output: string) => void }> = [
+    { name: 'always 行尾注释含括号', expectedInsertions: 0, source: `always @(posedge i_clk or negedge i_rst_n) begin                //(SYS_FRE /160/115200)-1 ;
+    if (!i_rst_n) begin
+        bps_div_cnt <= BPS19200_DIV; //19200
+    end
+    else if (!rx_busy) begin
+        case (i_baud_set)
+            0: bps_div_cnt <= BPS1200_DIV;
+            default: bps_div_cnt <= BPS19200_DIV;
+        endcase
+    end
+end`, checks: o => assert.ok(o.includes('always @(posedge i_clk or negedge i_rst_n) begin                //(SYS_FRE /160/115200)-1 ;\n    if (!i_rst_n) begin') && !o.includes('//(SYS_FRE /160/115200) begin')) },
+    { name: 'always 包含内联 if else 链', expectedInsertions: 5, source: `always @(posedge i_clk or negedge i_rst_n)
+    if (!i_rst_n) div_cnt <= 16'd0;
+    else if (uart_state != IDLE) begin
+        if (div_cnt == bps_div_cnt) div_cnt <= 16'd0;
+        else div_cnt <= div_cnt + 1'b1;
+    end
+    else div_cnt <= 16'd0;`, checks: o => assert.ok(o.includes("always @(posedge i_clk or negedge i_rst_n) begin\n    if (!i_rst_n) begin\n        div_cnt <= 16'd0;\n    end\n    else if") && !o.includes("    end\n    end\n    else if")) },
     { name: 'reported nested else-if', expectedInsertions: 5, source: `always @(posedge clk) begin
     if (!rst_n)
         a <= 0;
@@ -42,6 +61,43 @@ end`, checks: o => assert.ok(o.includes('else if(receive_lock) begin') && o.incl
     else
         rx_busy <= 1'b0;
 end`, checks: o => assert.ok(o.includes("end else if (state != IDLE) begin\n        rx_busy <= 1'b1;\n    end\n    else begin")) },
+    { name: 'always 包含已有 if 块', expectedInsertions: 1, source: `always@(posedge i_clk or negedge i_rst_n)
+if(!i_rst_n)begin
+    fifo_rd_en <= 1'd0;
+    end
+else if(uart_state==IDLE)begin
+    fifo_rd_en <= 1'd0;
+end
+else if(uart_start)begin
+    fifo_rd_en <= 1'd1;
+end
+else begin
+    fifo_rd_en <= 1'd0;
+    end`, checks: o => assert.ok(o.includes("always@(posedge i_clk or negedge i_rst_n) begin\nif(!i_rst_n)begin\n    fifo_rd_en <= 1'd0;\n    end\nelse if") && !o.includes("fifo_rd_en <= 1'd0;\nend\n    end")) },
+    { name: 'always 包含多个已有分支块', expectedInsertions: 2, source: `always@(posedge i_clk or negedge i_rst_n)
+if(!i_rst_n)begin
+    tx_data_cnt<= 11'd0;
+    end
+else if(uart_state==TX_FINISH)begin
+    tx_data_cnt<= 11'd0;
+end
+else if(byte_tx_finish&&uart_state==TX_DATA_WAIT)begin
+    tx_data_cnt<= tx_data_cnt+1'd1;
+end
+else  tx_data_cnt<= tx_data_cnt;`, checks: o => assert.ok(o.includes('always@(posedge i_clk or negedge i_rst_n) begin') && o.includes('else begin\n    tx_data_cnt<= tx_data_cnt;\nend')) },
+    { name: 'always 块内多条赋值', expectedInsertions: 1, source: `always@(posedge i_clk or negedge i_rst_n)
+if(!i_rst_n)begin
+    byte_start <= 1'd0;
+    byte_tx_data <= 8'd0;
+    end
+else if(uart_state==TX_FREE_START)begin
+    byte_start <= 1'd1;
+    byte_tx_data <= free_frame_header;
+end
+else begin
+    byte_start <= 1'd0;
+    byte_tx_data <= byte_tx_data;
+    end`, checks: o => assert.ok(o.includes("byte_start <= 1'd0;\n    byte_tx_data <= 8'd0;\n    end\nelse if") && o.endsWith('    end\nend')) },
     { name: 'single if', expectedInsertions: 1, source: `if (a)
     x = 1;`, checks: o => assert.ok(o.includes('if (a) begin\n    x = 1;\nend')) },
     { name: 'if else', expectedInsertions: 2, source: `if (a)
@@ -57,7 +113,7 @@ else
     { name: 'multiline condition', expectedInsertions: 1, source: `if (a &&
     b)
     x = 1;`, checks: o => assert.ok(o.includes('    b) begin')) },
-    { name: 'inline if', expectedInsertions: 1, source: `if (a) x = 1;`, checks: o => assert.ok(o.includes('if (a)\nbegin\n    x = 1;\nend')) },
+    { name: 'inline if', expectedInsertions: 1, source: `if (a) x = 1;`, checks: o => assert.ok(o.includes('if (a) begin\n    x = 1;\nend')) },
     { name: 'existing begin is unchanged', expectedInsertions: 0, source: `if (a) begin
     x = 1;
 end`, checks: o => assert.strictEqual(o, `if (a) begin
@@ -79,7 +135,7 @@ end`) },
     x = 1; // assignment`, checks: o => assert.ok(o.includes('if (a) begin // condition')) },
     { name: '行尾块注释', expectedInsertions: 1, source: `if (a) /* condition */
     x = 1;`, checks: o => assert.ok(o.includes('if (a) begin /* condition */')) },
-    { name: 'else inline statement', expectedInsertions: 1, source: `else x = 0;`, checks: o => assert.ok(o.includes('else\nbegin\n    x = 0;\nend')) },
+    { name: 'else inline statement', expectedInsertions: 1, source: `else x = 0;`, checks: o => assert.ok(o.includes('else begin\n    x = 0;\nend')) },
     { name: 'if with block body', expectedInsertions: 0, source: `if (a)
 begin
     x = 1;
@@ -118,5 +174,6 @@ for (const test of cases) {
     assert.strictEqual(insertions, test.expectedInsertions, test.name);
     test.checks(output);
 }
+
 
 console.log(`${cases.length} begin/end transformation cases passed`);

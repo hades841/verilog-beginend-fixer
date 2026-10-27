@@ -2,12 +2,16 @@
  * begin_end.ts - begin/end 检测与插入逻辑（纯插入，不含代码检查）
  */
 
+function removeLineComments(line: string): string {
+    return line.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//g, '');
+}
+
 function findConditionEnd(lines: string[], startLineIndex: number): number {
     let depth = 0;
     let foundOpen = false;
 
     for (let i = startLineIndex; i < lines.length; i++) {
-        const noComment = lines[i].replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '');
+        const noComment = removeLineComments(lines[i]);
         for (let j = 0; j < noComment.length; j++) {
             if (noComment[j] === '(') { depth++; foundOpen = true; }
             else if (noComment[j] === ')') { depth--; }
@@ -20,7 +24,7 @@ function findConditionEnd(lines: string[], startLineIndex: number): number {
 }
 
 function lineEndsWithBegin(trimmed: string): boolean {
-    const noComment = trimmed.replace(/\/\/.*$/, '').replace(/\/\*.*?\*\//, '');
+    const noComment = removeLineComments(trimmed);
     return /\bbegin\s*(?::\s*\w+)?\s*$/.test(noComment.trim());
 }
 
@@ -175,8 +179,8 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
         // ===== always =====
         if (trimmed.match(/^always\s*@\s*\([^)]*\)/)) {
             const condEndLine = findConditionEnd(lines, i);
-            const condEndTrimmed = lines[condEndLine].trim();
-            const afterParen = condEndTrimmed.substring(condEndTrimmed.lastIndexOf(')') + 1).trim();
+            const condEndCode = removeLineComments(lines[condEndLine]);
+            const afterParen = condEndCode.substring(condEndCode.lastIndexOf(')') + 1).trim();
 
             if (afterParen && !afterParen.startsWith('begin') && !afterParen.startsWith('//') && afterParen !== ';') {
                 const indent = (line.match(/^(\s*)/) || ['', ''])[1];
@@ -312,6 +316,16 @@ export function analyzeBeginEnd(lines: string[]): { success: boolean; message: s
 }
 
 /** 返回从 startLine 开始的完整语句之后的行号。 */
+function findBeginEndBlockEnd(lines: string[], startLine: number): number {
+    let depth = 0;
+    for (let i = startLine; i < lines.length; i++) {
+        const text = lines[i].replace(/\/\/.*$/, '').trim();
+        if (lineStartsWithBegin(text) || lineEndsWithBegin(text)) depth++;
+        if (/^end\b/.test(text) && --depth === 0) return i + 1;
+    }
+    return lines.length;
+}
+
 function findStatementEnd(lines: string[], startLine: number): number {
     const first = getNextEffectiveLine(lines, startLine - 1);
     if (!first) return lines.length;
@@ -319,13 +333,7 @@ function findStatementEnd(lines: string[], startLine: number): number {
     const index = first.index;
     const trimmed = first.trimmed;
     if (lineStartsWithBegin(trimmed)) {
-        let depth = 0;
-        for (let i = index; i < lines.length; i++) {
-            const text = lines[i].replace(/\/\/.*$/, '').trim();
-            if (lineStartsWithBegin(text)) depth++;
-            if (/^end\b/.test(text) && --depth === 0) return i + 1;
-        }
-        return lines.length;
+        return findBeginEndBlockEnd(lines, index);
     }
 
     if (/^case(?:x|z)?\b/.test(trimmed)) {
@@ -341,7 +349,7 @@ function findStatementEnd(lines: string[], startLine: number): number {
     if (/^else\b/.test(trimmed) && !/^else\s+if\b/.test(trimmed)) {
         const body = trimmed.substring(4).trim();
         if (body === '') return findStatementEnd(lines, index + 1);
-        if (lineEndsWithBegin(trimmed)) return findStatementEnd(lines, index);
+        if (lineEndsWithBegin(trimmed)) return findBeginEndBlockEnd(lines, index);
         return index + 1;
     }
 
@@ -354,9 +362,12 @@ function findStatementEnd(lines: string[], startLine: number): number {
     const afterCondition = /^initial\b/.test(trimmed)
         ? conditionText.substring('initial'.length).trim()
         : conditionText.substring(conditionText.lastIndexOf(')') + 1).trim();
-    if (afterCondition !== '' && !afterCondition.startsWith('begin')) return conditionEnd + 1;
-
-    let end = findStatementEnd(lines, conditionEnd + 1);
+    const isInlineStatement = afterCondition !== '' && !afterCondition.startsWith('begin');
+    let end = isInlineStatement
+        ? conditionEnd + 1
+        : afterCondition.startsWith('begin')
+            ? findBeginEndBlockEnd(lines, conditionEnd)
+            : findStatementEnd(lines, conditionEnd + 1);
     // 外层 if 的分支可能是未加 begin/end 的嵌套 if/else。
     if (isIf) {
         const next = getNextEffectiveLine(lines, end - 1);
@@ -395,32 +406,20 @@ export function calculateEndPositions(lines: string[], list: InsertPoint[]): Beg
                 }
                 edits.push({
                     pos: point.lineIndex + 1,
-                    text: `${point.indent}begin\n${point.indent}    ${stmt}\n${point.indent}end`
-                });
-                edits.push({
-                    pos: point.lineIndex + 1,
-                    text: `${point.indent}${head}\n`,
+                    text: `${point.indent}${head} begin\n${point.indent}    ${stmt}\n${point.indent}end`,
                     replaceLine: point.lineIndex
                 });
             } else if (point.type === 'else' && point.inlineStmt !== '__INLINE__') {
                 edits.push({
                     pos: point.lineIndex + 1,
-                    text: `${point.indent}begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`
-                });
-                edits.push({
-                    pos: point.lineIndex + 1,
-                    text: `${point.indent}else\n`,
+                    text: `${point.indent}else begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`,
                     replaceLine: point.lineIndex
                 });
             } else if (point.type === 'elseif' || point.type === 'if' || point.type === 'for') {
                 const { head, stmt } = parseInlineControl(lines[point.lineIndex]);
                 edits.push({
                     pos: point.lineIndex + 1,
-                    text: `${point.indent}begin\n${point.indent}    ${stmt}\n${point.indent}end`
-                });
-                edits.push({
-                    pos: point.lineIndex + 1,
-                    text: `${point.indent}${head}\n`,
+                    text: `${point.indent}${head} begin\n${point.indent}    ${stmt}\n${point.indent}end`,
                     replaceLine: point.lineIndex
                 });
             }
@@ -458,3 +457,4 @@ export function applyEdits(lines: string[], edits: BeginEndEdit[]): string[] {
     }
     return result;
 }
+
