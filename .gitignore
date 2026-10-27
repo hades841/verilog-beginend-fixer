@@ -1,0 +1,4 @@
+node_modules/
+*.vsix
+.verilog-helper-logs/
+resources/verilog-beginend-fixer.png

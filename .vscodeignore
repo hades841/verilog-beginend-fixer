@@ -1,0 +1,12 @@
+.git/**
+.vscode/**
+.verilog-helper-logs/**
+node_modules/**
+resources/verilog-beginend-fixer.png
+src/**
+**/*.test.ts
+**/*.test.js
+**/*.map
+tsconfig.json
+package-lock.json
+问题记录.md
