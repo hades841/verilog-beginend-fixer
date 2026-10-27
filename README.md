@@ -4,6 +4,12 @@
 
 适用于需要快速规范化 `always`、`if`、`else`、`for` 等单语句控制结构的 FPGA 开发场景。
 
+## 项目与反馈
+
+- 源码仓库：[hades841/verilog-beginend-fixer](https://github.com/hades841/verilog-beginend-fixer)
+- 问题反馈：[GitHub Issues](https://github.com/hades841/verilog-beginend-fixer/issues)
+- 使用中如遇到 Bug、兼容性问题或有功能建议，欢迎发送邮件至 [1842384443@qq.com](mailto:1842384443@qq.com)。我会尽力复现并修复问题。
+
 ## 功能
 
 - 自动为需要代码块的控制语句补充 `begin` / `end`。

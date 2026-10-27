@@ -1,5 +1,9 @@
 # 更新日志
 
+## 1.3.1
+
+- 补充 GitHub 源码仓库、Issue 反馈入口与联系邮箱。
+
 ## 1.3.0
 
 - 自动补充 Verilog / SystemVerilog 控制语句缺失的 `begin` / `end`。
