@@ -1,5 +1,102 @@
 # Verilog BeginEnd Fixer
 
+Verilog BeginEnd Fixer automatically adds missing `begin` / `end` blocks to Verilog and SystemVerilog control statements. Before applying any change, it validates the transformed candidate with Vivado `xvlog`; the active file remains unchanged when validation fails.
+
+It is intended for FPGA development workflows that need to normalize single-statement `always`, `if`, `else`, and `for` control structures quickly and safely.
+
+## Project and support
+
+- Source repository: [hades841/verilog-beginend-fixer](https://github.com/hades841/verilog-beginend-fixer)
+- Report issues: [GitHub Issues](https://github.com/hades841/verilog-beginend-fixer/issues)
+- For bugs, compatibility issues, or feature suggestions, email [1842384443@qq.com](mailto:1842384443@qq.com). I will do my best to reproduce and fix the issue.
+
+## Features
+
+- Automatically adds `begin` / `end` blocks where a control statement needs a code block.
+- Inserts `begin` at the end of the control-statement line and before any end-of-line comment.
+- Supports `.v` and `.sv` files. Testbench files whose names end in `_tb` are skipped.
+- Validates candidate code with Vivado `xvlog` before writing changes.
+- Leaves the editor unchanged after validation failure, and writes Vivado output plus the complete candidate file to a log.
+- Overwrites one workspace log file on every run so it always represents the latest result.
+
+## Usage
+
+1. Open a Verilog or SystemVerilog file in VS Code.
+2. Configure the Vivado installation directory, for example `D:\Vivado\2022.2`.
+3. Press `Ctrl+Alt+K` (`Cmd+Alt+K` on macOS), or run **Verilog: Auto add begin-end** from the Command Palette.
+4. The transformed result is written to the active file only after `xvlog` validation succeeds.
+
+## Example
+
+Before conversion:
+
+```verilog
+always @(posedge clk or negedge rst_n)
+    if (!rst_n)
+        rx_busy <= 1'b0;
+    else if (state != IDLE)
+        rx_busy <= 1'b1;
+    else
+        rx_busy <= 1'b0;
+```
+
+After conversion:
+
+```verilog
+always @(posedge clk or negedge rst_n) begin
+    if (!rst_n) begin
+        rx_busy <= 1'b0;
+    end else if (state != IDLE) begin
+        rx_busy <= 1'b1;
+    end else begin
+        rx_busy <= 1'b0;
+    end
+end
+```
+
+End-of-line comments are retained after `begin`:
+
+```verilog
+if (enable) begin // Update only when enabled
+    data <= next_data;
+end
+```
+
+## Settings
+
+Search for **Verilog BeginEnd Fixer** in VS Code Settings, or add the following to `settings.json`:
+
+```json
+{
+  "verilog-helper.vivadoPath": "D:\\Vivado\\2022.2",
+  "verilog-helper.vivadoTimeoutMs": 120000,
+  "verilog-helper.vivadoIncludePaths": [
+    "D:\\FPGAProject\\common\\include"
+  ]
+}
+```
+
+`verilog-helper.vivadoPath` accepts either the Vivado installation directory or the full path to `xvlog.bat`. The extension automatically collects the current source directory, relative include directories, and nested include directories for `xvlog`. Use `verilog-helper.vivadoIncludePaths` for shared project include directories that cannot be found automatically. If Vivado is not configured, `xvlog` is unavailable, or validation fails, the extension does not write the transformed result.
+
+## Logs
+
+The log file is always written to:
+
+```text
+<workspace>/.verilog-helper-logs/vivado-validation.log
+```
+
+The log contains Vivado `xvlog` output and the complete transformed candidate source. Each command execution overwrites the previous log.
+
+## Notes
+
+- Use version control or a backup before applying batch conversion results.
+- `xvlog` validation confirms that the transformed file passes Vivado Verilog/SystemVerilog syntax and semantic analysis. Project-level dependencies, macro definitions, and include directories should still be verified in the corresponding Vivado project environment.
+
+---
+
+# 中文说明
+
 为 Verilog / SystemVerilog 代码自动补充缺失的 `begin` / `end`，并在写入前调用 Vivado `xvlog` 校验转换结果。校验失败时，扩展不会修改原文件。
 
 适用于需要快速规范化 `always`、`if`、`else`、`for` 等单语句控制结构的 FPGA 开发场景。
