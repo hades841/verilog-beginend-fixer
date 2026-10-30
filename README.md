@@ -10,6 +10,17 @@
 - 问题反馈：[GitHub Issues](https://github.com/hades841/verilog-beginend-fixer/issues)
 - 使用中如遇到 Bug、兼容性问题或有功能建议，欢迎发送邮件至 [1842384443@qq.com](mailto:1842384443@qq.com)。我会尽力复现并修复问题。
 
+## 更新记录
+
+### 1.3.2
+
+- 修复 Vivado `xvlog` 校验时无法解析源文件同目录 `include` 文件的问题。
+- 自动收集相对路径和嵌套 `include` 文件所在目录，例如 `include "..\\qwe\\reg_define.v"`。
+- 新增 `verilog-helper.vivadoIncludePaths`，用于配置无法自动发现的工程公共 include 目录。
+- 日志新增实际使用的 include 搜索目录，便于排查路径配置问题。
+
+完整历史请见 [CHANGELOG.md](CHANGELOG.md)。
+
 ## 功能
 
 - 自动为需要代码块的控制语句补充 `begin` / `end`。
