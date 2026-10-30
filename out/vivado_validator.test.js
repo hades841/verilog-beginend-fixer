@@ -43,6 +43,26 @@ async function run() {
     const firstCandidate = 'module first_check; endmodule\n';
     const secondCandidate = 'module second_check; endmodule\n';
     try {
+        const sourcePath = path.join('project', 'rtl', 'top.v');
+        const includeDirectories = (0, vivado_validator_1.getIncludeDirectories)(sourcePath, [path.join('project', 'include'), path.join('project', 'rtl')]);
+        assert.deepStrictEqual(includeDirectories, [
+            path.resolve('project', 'rtl'),
+            path.resolve('project', 'include')
+        ]);
+        assert.deepStrictEqual((0, vivado_validator_1.buildXvlogArgs)(sourcePath, path.join('temporary', 'top.v'), [path.join('project', 'include')]), ['-i', path.resolve('project', 'rtl'), '-i', path.resolve('project', 'include'), path.join('temporary', 'top.v')]);
+        const includeProject = await fs_1.promises.mkdtemp(path.join(os.tmpdir(), 'verilog-helper-include-project-'));
+        try {
+            const sourcePath = path.join(includeProject, 'rtl', 'top.v');
+            const registerFile = path.join(includeProject, 'qwe', 'reg_define.v');
+            const nestedFile = path.join(includeProject, 'qwe', 'nested', 'common.v');
+            await fs_1.promises.mkdir(path.dirname(nestedFile), { recursive: true });
+            await fs_1.promises.writeFile(registerFile, '`include "nested/common.v"\n', 'utf8');
+            await fs_1.promises.writeFile(nestedFile, '`define TEST_VALUE 1\n', 'utf8');
+            assert.deepStrictEqual(await (0, vivado_validator_1.collectIncludeDirectories)(sourcePath, '`include "../qwe/reg_define.v"\n'), [path.resolve(includeProject, 'rtl'), path.resolve(includeProject, 'qwe'), path.resolve(includeProject, 'qwe', 'nested')]);
+        }
+        finally {
+            await fs_1.promises.rm(includeProject, { recursive: true, force: true });
+        }
         const missing = await (0, vivado_validator_1.validateWithVivado)('syntax_check.v', firstCandidate, logDirectory, '', 1000);
         assert.strictEqual(missing.success, false);
         assert.ok((await fs_1.promises.readFile(missing.logPath, 'utf8')).includes(firstCandidate));

@@ -69,11 +69,14 @@ end
 ```json
 {
   "verilog-helper.vivadoPath": "D:\\Vivado\\2022.2",
-  "verilog-helper.vivadoTimeoutMs": 120000
+  "verilog-helper.vivadoTimeoutMs": 120000,
+  "verilog-helper.vivadoIncludePaths": [
+    "D:\\FPGAProject\\common\\include"
+  ]
 }
 ```
 
-`verilog-helper.vivadoPath` 可填写 Vivado 安装目录，也可直接填写 `xvlog.bat` 的完整路径。未配置 Vivado、找不到 `xvlog` 或 `xvlog` 校验失败时，扩展不会写入转换结果。
+`verilog-helper.vivadoPath` 可填写 Vivado 安装目录，也可直接填写 `xvlog.bat` 的完整路径。扩展会自动收集当前源文件、相对路径 include 文件及其嵌套 include 文件所在目录，并加入 xvlog 搜索路径；无法从源码路径自动找到的工程公共目录，可通过 `verilog-helper.vivadoIncludePaths` 追加。未配置 Vivado、找不到 `xvlog` 或 `xvlog` 校验失败时，扩展不会写入转换结果。
 
 ## 日志
 

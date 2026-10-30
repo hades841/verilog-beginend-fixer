@@ -75,7 +75,8 @@ export async function processDocument() {
         finalText,
         path.join(workspacePath, '.verilog-helper-logs'),
         config.get<string>('vivadoPath', ''),
-        config.get<number>('vivadoTimeoutMs', 120000)
+        config.get<number>('vivadoTimeoutMs', 120000),
+        config.get<string[]>('vivadoIncludePaths', [])
     );
     if (!vivadoResult.success) {
         vscode.window.showErrorMessage(`${vivadoResult.message} 未修改文件；日志：${vivadoResult.logPath}`);
