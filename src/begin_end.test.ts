@@ -61,6 +61,18 @@ end`, checks: o => assert.ok(o.includes('else if(receive_lock) begin') && o.incl
     else
         rx_busy <= 1'b0;
 end`, checks: o => assert.ok(o.includes("end else if (state != IDLE) begin\n        rx_busy <= 1'b1;\n    end\n    else begin")) },
+    { name: 'end else inline body excludes following statement', expectedInsertions: 1, source: `always @(posedge clk_pixel) begin
+        ready_sync <= {ready_sync[0], frame_ready};
+        if (reset_pixel) begin
+            x <= 0;
+            y <= 0;
+        end else if (x == 799) begin
+            x <= 0;
+            y <= y == 524 ? 0 : y + 1'b1;
+        end else x <= x + 1'b1;
+        active_d <= active && ready_sync[1] && !reset_pixel;
+        hs_d <= !(x >= 656 && x < 752);
+    end`, checks: o => assert.ok(o.includes("end else begin\n            x <= x + 1'b1;\n        end\n        active_d <= active") && !o.includes("x <= x + 1'b1; begin")) },
     { name: 'always 包含已有 if 块', expectedInsertions: 1, source: `always@(posedge i_clk or negedge i_rst_n)
 if(!i_rst_n)begin
     fifo_rd_en <= 1'd0;

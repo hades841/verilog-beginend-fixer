@@ -74,7 +74,9 @@ function hasInlineStatement(line) {
         return false;
     if (/\)\s*$/.test(noBlockComment))
         return false;
-    const elseMatch = noBlockComment.match(/^else\s+(.*)/);
+    // end else 与 else 的判断规则相同，避免把后续普通语句误当成 else 的语句体。
+    const controlText = noBlockComment.replace(/^end\s+/, '');
+    const elseMatch = controlText.match(/^else\s+(.*)/);
     if (elseMatch) {
         const afterElse = elseMatch[1].trim();
         if (afterElse.startsWith('if')) {
@@ -101,10 +103,10 @@ function hasInlineStatement(line) {
             return true;
         }
     }
-    if (/^if\s*\(/.test(noBlockComment) || /^for\s*\(/.test(noBlockComment)) {
+    if (/^if\s*\(/.test(controlText) || /^for\s*\(/.test(controlText)) {
         let depth = 0;
-        for (let i = 0; i < noBlockComment.length; i++) {
-            const char = noBlockComment[i];
+        for (let i = 0; i < controlText.length; i++) {
+            const char = controlText[i];
             if (char === '(')
                 depth++;
             else if (char === ')')
@@ -247,16 +249,9 @@ function analyzeBeginEnd(lines) {
                 continue;
             }
             if (!elseBody.startsWith('begin')) {
-                if (hasInlineStatement(line)) {
-                    const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                    insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody });
-                }
-                else {
-                    if (shouldInsertBegin(lines, i, i)) {
-                        const indent = (line.match(/^(\s*)/) || ['', ''])[1];
-                        insertBeginList.push({ lineIndex: i, indent, type: 'else' });
-                    }
-                }
+                // else 后已有同一行语句时，必须替换整行；不能在行尾追加 begin。
+                const indent = (line.match(/^(\s*)/) || ['', ''])[1];
+                insertBeginList.push({ lineIndex: i, indent, type: 'else', inlineStmt: elseBody });
             }
             continue;
         }
@@ -410,9 +405,10 @@ function calculateEndPositions(lines, list) {
                 });
             }
             else if (point.type === 'else' && point.inlineStmt !== '__INLINE__') {
+                const elseHead = /^\s*end\s+else\b/.test(lines[point.lineIndex]) ? 'end else' : 'else';
                 edits.push({
                     pos: point.lineIndex + 1,
-                    text: `${point.indent}else begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`,
+                    text: `${point.indent}${elseHead} begin\n${point.indent}    ${point.inlineStmt}\n${point.indent}end`,
                     replaceLine: point.lineIndex
                 });
             }
