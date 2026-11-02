@@ -3,10 +3,10 @@
   "displayName": "Verilog BeginEnd Fixer",
   "publisher": "hades841",
   "description": "Auto-complete Verilog/SystemVerilog begin/end blocks with Vivado xvlog validation.",
-  "version": "1.3.4",
+  "version": "1.3.5",
   "scripts": {
     "compile": "tsc -p .",
-    "test": "npm run compile && node out/begin_end.test.js && node out/vivado_validator.test.js"
+    "test": "npm run compile && node out/begin_end.test.js && node out/vivado_validator.test.js && node out/sv_packages.test.js"
   },
   "devDependencies": {
     "@types/node": "16.x",
@@ -70,6 +70,12 @@
             "type": "string"
           },
           "description": "额外的 Vivado xvlog include 搜索目录。源文件所在目录会自动加入。"
+        },
+        "verilog-helper.vivadoPackageFiles": {
+          "type": "array",
+          "default": [],
+          "items": { "type": "string" },
+          "description": "额外的 SystemVerilog 包定义文件；相对路径以当前文件所在工作区为基准。工作区和 include 目录中的包会自动查找，配置的文件优先用于解决同名包歧义，并在候选文件之前按依赖顺序编译。"
         }
       }
     }

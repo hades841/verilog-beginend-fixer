@@ -92,9 +92,12 @@ async function processDocument() {
     }
     // ========= 写入文件 =========
     const finalText = outputLines.join("\n");
-    const config = vscode.workspace.getConfiguration('verilog-helper');
+    const config = vscode.workspace.getConfiguration('verilog-helper', doc.uri);
     const workspacePath = vscode.workspace.getWorkspaceFolder(doc.uri)?.uri.fsPath ?? path.dirname(fileName);
-    const vivadoResult = await (0, vivado_validator_1.validateWithVivado)(fileName, finalText, path.join(workspacePath, '.verilog-helper-logs'), config.get('vivadoPath', ''), config.get('vivadoTimeoutMs', 120000), config.get('vivadoIncludePaths', []));
+    const vivadoResult = await (0, vivado_validator_1.validateWithVivado)(fileName, finalText, path.join(workspacePath, '.verilog-helper-logs'), config.get('vivadoPath', ''), config.get('vivadoTimeoutMs', 120000), config.get('vivadoIncludePaths', []).map(directory => path.resolve(workspacePath, directory)), {
+        searchRoots: [workspacePath],
+        packageFiles: config.get('vivadoPackageFiles', []).map(file => path.resolve(workspacePath, file))
+    });
     if (!vivadoResult.success) {
         vscode.window.showErrorMessage(`${vivadoResult.message} 未修改文件；日志：${vivadoResult.logPath}`);
         return;

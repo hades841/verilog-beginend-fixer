@@ -41,6 +41,7 @@ const fs_1 = require("fs");
 const child_process_1 = require("child_process");
 const os = __importStar(require("os"));
 const path = __importStar(require("path"));
+const sv_packages_1 = require("./sv_packages");
 /** 返回 xvlog 搜索 `include 文件时使用的目录，首项始终是源文件目录。 */
 function getIncludeDirectories(sourcePath, includePaths = []) {
     const directories = [path.dirname(sourcePath), ...includePaths]
@@ -95,10 +96,10 @@ async function collectIncludeDirectories(sourcePath, candidateText, includePaths
     return directories;
 }
 /** 构造 xvlog 参数，确保候选文件仍可引用源工程内的 include 文件。 */
-function buildXvlogArgs(sourcePath, candidatePath, includePaths = []) {
-    const languageArgs = path.extname(sourcePath).toLowerCase() === '.sv' ? ['--sv'] : [];
+function buildXvlogArgs(sourcePath, candidatePath, includePaths = [], packageFiles = []) {
+    const languageArgs = path.extname(sourcePath).toLowerCase() === '.sv' || packageFiles.length ? ['--sv'] : [];
     const includeArgs = getIncludeDirectories(sourcePath, includePaths).flatMap(directory => ['-i', directory]);
-    return [...languageArgs, ...includeArgs, candidatePath];
+    return [...languageArgs, ...includeArgs, ...packageFiles, candidatePath];
 }
 function findXvlog(vivadoPath) {
     const executable = process.platform === 'win32' ? 'xvlog.bat' : 'xvlog';
@@ -134,13 +135,17 @@ function runXvlog(command, args, cwd, timeoutMs) {
     });
 }
 /** 使用 Vivado xvlog 校验候选代码，并始终写出包含完整候选文件的日志。 */
-async function validateWithVivado(sourcePath, candidateText, logDirectory, vivadoPath, timeoutMs, includePaths = []) {
+async function validateWithVivado(sourcePath, candidateText, logDirectory, vivadoPath, timeoutMs, includePaths = [], packageOptions = {}) {
     await fs_1.promises.mkdir(logDirectory, { recursive: true });
     const logPath = path.join(logDirectory, 'vivado-validation.log');
     const xvlog = findXvlog(vivadoPath.trim());
     let message = '';
     let toolOutput = '';
     let success = false;
+    let includeDirectories = getIncludeDirectories(sourcePath, includePaths);
+    let packageFiles = [];
+    let unresolvedPackages = [];
+    let commandLine = '';
     if (!vivadoPath.trim()) {
         message = '未配置 Vivado 安装目录。';
     }
@@ -148,19 +153,29 @@ async function validateWithVivado(sourcePath, candidateText, logDirectory, vivad
         message = `未找到 xvlog：${vivadoPath}`;
     }
     else {
-        const tempDirectory = await fs_1.promises.mkdtemp(path.join(os.tmpdir(), 'verilog-helper-'));
+        let tempDirectory;
         try {
+            includeDirectories = await collectIncludeDirectories(sourcePath, candidateText, includePaths);
+            const packages = await (0, sv_packages_1.collectPackageFiles)(sourcePath, candidateText, includeDirectories, packageOptions);
+            includeDirectories = packages.includeDirectories;
+            packageFiles = packages.files;
+            unresolvedPackages = packages.unresolved;
+            tempDirectory = await fs_1.promises.mkdtemp(path.join(os.tmpdir(), 'verilog-helper-'));
             const candidatePath = path.join(tempDirectory, path.basename(sourcePath));
             await fs_1.promises.writeFile(candidatePath, candidateText, 'utf8');
-            const includeDirectories = await collectIncludeDirectories(sourcePath, candidateText, includePaths);
-            const args = buildXvlogArgs(sourcePath, candidatePath, includeDirectories);
+            const args = buildXvlogArgs(sourcePath, candidatePath, includeDirectories, packageFiles);
+            commandLine = [xvlog, ...args].map(argument => JSON.stringify(argument)).join(' ');
             const result = await runXvlog(xvlog, args, tempDirectory, timeoutMs);
             toolOutput = result.output;
             success = result.code === 0;
             message = success ? 'Vivado xvlog 校验通过。' : `Vivado xvlog 校验失败，退出码：${result.code}`;
         }
+        catch (error) {
+            message = `Vivado 校验准备失败：${error instanceof Error ? error.message : String(error)}`;
+        }
         finally {
-            await fs_1.promises.rm(tempDirectory, { recursive: true, force: true });
+            if (tempDirectory)
+                await fs_1.promises.rm(tempDirectory, { recursive: true, force: true });
         }
     }
     const log = [
@@ -168,7 +183,11 @@ async function validateWithVivado(sourcePath, candidateText, logDirectory, vivad
         `时间：${new Date().toLocaleString('zh-CN')}`,
         `源文件：${sourcePath}`,
         `Vivado 配置：${vivadoPath || '未配置'}`,
-        `Include 搜索目录：${await collectIncludeDirectories(sourcePath, candidateText, includePaths).then(directories => directories.join('; '))}`,
+        `Include 搜索目录：${includeDirectories.join('; ')}`,
+        `包文件编译顺序：${packageFiles.length ? packageFiles.join(' -> ') : '无'}`,
+        `未找到定义的作用域引用：${unresolvedPackages.length ? unresolvedPackages.join(', ') : '无'}`,
+        ...(unresolvedPackages.length ? ['提示：请确认包文件位于当前工作区或 include 目录内，也可配置 verilog-helper.vivadoPackageFiles。最终结果以 xvlog 为准。'] : []),
+        `xvlog 命令：${commandLine || '未执行'}`,
         `结果：${message}`,
         '',
         '===== Vivado xvlog 输出 =====',

@@ -16,6 +16,7 @@ It is intended for FPGA development workflows that need to normalize single-stat
 - Inserts `begin` at the end of the control-statement line and before any end-of-line comment.
 - Supports `.v` and `.sv` files. Testbench files whose names end in `_tb` are skipped.
 - Validates candidate code with Vivado `xvlog` before writing changes.
+- Finds referenced SystemVerilog packages in the workspace and include directories, then compiles them in dependency order before the candidate file.
 - Leaves the editor unchanged after validation failure, and writes Vivado output plus the complete candidate file to a log.
 - Overwrites one workspace log file on every run so it always represents the latest result.
 
@@ -72,11 +73,16 @@ Search for **Verilog BeginEnd Fixer** in VS Code Settings, or add the following 
   "verilog-helper.vivadoTimeoutMs": 120000,
   "verilog-helper.vivadoIncludePaths": [
     "D:\\FPGAProject\\common\\include"
+  ],
+  "verilog-helper.vivadoPackageFiles": [
+    "D:\\FPGAProject\\shared\\configPackage.sv"
   ]
 }
 ```
 
 `verilog-helper.vivadoPath` accepts either the Vivado installation directory or the full path to `xvlog.bat`. The extension automatically collects the current source directory, relative include directories, and nested include directories for `xvlog`. Use `verilog-helper.vivadoIncludePaths` for shared project include directories that cannot be found automatically. If Vivado is not configured, `xvlog` is unavailable, or validation fails, the extension does not write the transformed result.
+
+For `import configPackage::*;` or `configPackage::member`, the extension searches saved `.sv`, `.v`, `.svh`, and `.vh` files in the current workspace, source directory, and include directories by package declaration. Required packages and their dependencies are compiled before the candidate. Open the project root folder in VS Code so packages in sibling directories can be found. Use the optional `verilog-helper.vivadoPackageFiles` setting for packages outside these directories or to select one definition when multiple files declare the same package. Relative include and package settings are resolved from the current file's workspace folder. The example paths above should be replaced with your project paths; both lists can be empty when automatic discovery is sufficient.
 
 ## Logs
 
@@ -87,6 +93,8 @@ The log file is always written to:
 ```
 
 The log contains Vivado `xvlog` output and the complete transformed candidate source. Each command execution overwrites the previous log.
+
+It also records the package compilation order, unresolved scope references, and the actual `xvlog` invocation. Missing or invalid dependencies still cause validation to fail.
 
 ## Notes
 
@@ -113,6 +121,7 @@ The log contains Vivado `xvlog` output and the complete transformed candidate so
 - `begin` 添加在控制语句行的末尾，并位于该行注释之前。
 - 支持 `.v` 与 `.sv` 文件；文件名以 `_tb` 结尾的测试平台文件会跳过处理。
 - 写入前使用 Vivado `xvlog` 校验候选代码。
+- 自动查找工作区及 include 目录中引用的 SystemVerilog 包，并在候选文件之前按依赖顺序编译。
 - 校验失败时保持编辑器内容不变，并将 Vivado 输出与完整候选文件写入日志。
 - 每次运行覆盖工作区中的同一份日志，便于查看本次结果。
 
@@ -169,11 +178,16 @@ end
   "verilog-helper.vivadoTimeoutMs": 120000,
   "verilog-helper.vivadoIncludePaths": [
     "D:\\FPGAProject\\common\\include"
+  ],
+  "verilog-helper.vivadoPackageFiles": [
+    "D:\\FPGAProject\\shared\\configPackage.sv"
   ]
 }
 ```
 
 `verilog-helper.vivadoPath` 可填写 Vivado 安装目录，也可直接填写 `xvlog.bat` 的完整路径。扩展会自动收集当前源文件、相对路径 include 文件及其嵌套 include 文件所在目录，并加入 xvlog 搜索路径；无法从源码路径自动找到的工程公共目录，可通过 `verilog-helper.vivadoIncludePaths` 追加。未配置 Vivado、找不到 `xvlog` 或 `xvlog` 校验失败时，扩展不会写入转换结果。
+
+对于 `import configPackage::*;` 或 `configPackage::成员`，扩展会在当前工作区、源文件目录及 include 目录内的已保存 `.sv`、`.v`、`.svh`、`.vh` 文件中按包声明查找定义，并在候选文件之前按顺序编译所需包及其依赖。请在 VS Code 中打开工程根目录，以便查找同级目录内的包。包位于上述范围之外，或工程中存在多个同名包时，可通过可选设置 `verilog-helper.vivadoPackageFiles` 指定正确文件。include 和包文件配置中的相对路径均以当前文件所属工作区为基准。示例路径请替换为实际路径；自动查找足够时，这两个列表均可留空。
 
 ## 日志
 
@@ -184,6 +198,8 @@ end
 ```
 
 日志包含 Vivado `xvlog` 输出，以及本次转换后的完整候选代码。每次执行命令都会覆盖旧日志。
+
+日志还会记录包文件编译顺序、未找到定义的作用域引用和实际 `xvlog` 调用命令。依赖文件缺失或存在真正错误时，仍会校验失败并保留原文件。
 
 ## 注意事项
 
